@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AxiosRequestConfig } from 'axios';
 import { ConfigService } from '@nestjs/config';
-import { ConfigType } from '../configuration/getConfiguration';
-import { AmoCrmAdapter } from '../adapters/amo-crm-adapter';
+import { ConfigType } from '../infrastructure/configuration/getConfiguration';
+import { AmoCrmAdapter } from '../infrastructure/adapters/amo-crm-adapter';
 import {
   CreateDataModel,
   CreateDealDataModel,

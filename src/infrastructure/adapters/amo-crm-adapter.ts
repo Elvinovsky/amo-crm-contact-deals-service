@@ -2,14 +2,14 @@ import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { AxiosError, AxiosRequestConfig } from 'axios';
 import { catchError, firstValueFrom } from 'rxjs';
-import { AuthStorageService } from '../auth/auth-storage.service';
+import { AuthStorageService } from '../../auth/auth-storage.service';
 import { ConfigService } from '@nestjs/config';
 import { ConfigType } from '../configuration/getConfiguration';
 import {
   CreateDataModel,
   CreateDealDataModel,
   UpdateDataModel,
-} from '../dto/data.models';
+} from '../../dto/data.models';
 
 @Injectable()
 export class AmoCrmAdapter {

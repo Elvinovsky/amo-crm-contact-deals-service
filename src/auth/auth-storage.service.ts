@@ -1,5 +1,5 @@
 import { forwardRef, Inject, Injectable } from '@nestjs/common';
-import { AmoCrmAdapter } from '../adapters/amo-crm-adapter';
+import { AmoCrmAdapter } from '../infrastructure/adapters/amo-crm-adapter';
 
 @Injectable()
 export class AuthStorageService {
