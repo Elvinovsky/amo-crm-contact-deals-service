@@ -1,96 +1,79 @@
-import { Injectable } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
+import { Injectable, Logger } from '@nestjs/common';
 import { AxiosRequestConfig } from 'axios';
 import { ConfigService } from '@nestjs/config';
 import { ConfigType } from '../configuration/getConfiguration';
-import { lastValueFrom } from 'rxjs';
-
+import { AmoCrmAdapter } from '../adapters/amo-crm-adapter';
+import {
+  CreateDataModel,
+  CreateDealDataModel,
+  UpdateDataModel,
+} from '../dto/data.models';
 @Injectable()
 export class AmoCRMService {
-  private accessToken: string;
-
+  private readonly logger = new Logger(AmoCRMService.name);
   constructor(
-    private readonly httpService: HttpService,
+    private adapter: AmoCrmAdapter,
     private readonly configService: ConfigService<ConfigType>,
   ) {}
 
-  private async getAccessToken() {
-    const authUrl = `${this.configService.get('amoCRMBaseUrl', {
-      infer: true,
-    })}/oauth2/access_token`;
-
-    const authData = {
-      client_id: this.configService.get('client_id', {
-        infer: true,
-      }),
-      client_secret: this.configService.get('client_secret', {
-        infer: true,
-      }),
-      grant_type: 'client_credentials',
-      scope: 'contacts leads',
-    };
-
-    const config: AxiosRequestConfig = {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    };
-
-    const response = await this.httpService
-      .post(authUrl, authData, config)
-      .toPromise();
-
-    if (response.data && response.data.access_token) {
-      this.accessToken = response.data.access_token;
-      return this.accessToken;
-    } else {
-      throw new Error('Failed to obtain access token');
+  async processAmoCRMRequest(
+    name: string,
+    email: string,
+    phone: string,
+  ): Promise<string> {
+    try {
+      const result = await this.updateOrCreateContact(name, email, phone);
+      return result;
+    } catch (error) {
+      this.logger.error(error);
+      return 'Произошла ошибка при обработке запроса AmoCRM';
     }
   }
 
-  private async authenticate() {
-    if (!this.accessToken) {
-      await this.getAccessToken();
-    }
-
-    this.httpService.axiosRef.defaults.headers.common[
-      'Authorization'
-    ] = `Bearer ${this.accessToken}`;
-  }
-
-  // Шаг 1: Поиск контакта в AmoCRM по email и/или телефону
+  // Поиск контакта в AmoCRM по email и телефону
   private async findContact(email: string, phone: string) {
-    await this.authenticate();
-
     const searchUrl = `${this.configService.get('amoCRMBaseUrl', {
       infer: true,
     })}/api/v4/contacts`;
 
-    const config: AxiosRequestConfig = {
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        'Content-Type': 'application/json',
-      },
+    const configEmail: AxiosRequestConfig = {
       params: {
-        query: `${email} ${phone}`,
+        query: `${email}`,
       },
     };
 
-    const response = await this.httpService.get(searchUrl, config).toPromise();
+    const configPhone: AxiosRequestConfig = {
+      params: {
+        query: `${phone}`,
+      },
+    };
 
-    if (
-      response.data &&
-      response.data._embedded &&
-      response.data._embedded.contacts
-    ) {
-      const contacts = response.data._embedded.contacts;
-      return contacts.length > 0 ? contacts[0] : null;
+    const findPhoneResponse = await this.adapter.makeGetRequest(
+      searchUrl,
+      configPhone,
+    );
+    const findEmailResponse = await this.adapter.makeGetRequest(
+      searchUrl,
+      configEmail,
+    );
+
+    const findPhoneContact = findPhoneResponse?._embedded?.contacts?.[0];
+    const findEmailContact = findEmailResponse?._embedded?.contacts?.[0];
+
+    if (findPhoneContact && findEmailContact) {
+      // Если найдены контакты по обоим запросам
+      if (findPhoneContact.id === findEmailContact.id) {
+        return findPhoneContact;
+      } else {
+        // контакты по телефону и email различаются
+        throw new Error('Контакты по телефону и email различаются');
+      }
     }
 
-    return null;
+    return findPhoneContact || findEmailContact || null;
   }
 
-  // Шаг 2: Обновление или создание контакта в AmoCRM
+  // Обновление или создание контакта в AmoCRM
   private async updateOrCreateContact(
     name: string,
     email: string,
@@ -98,7 +81,10 @@ export class AmoCRMService {
   ) {
     const existingContact = await this.findContact(email, phone);
 
-    if (existingContact) {
+    // Битые данные (телефон или майл уже существует у другого пользователя)
+    if (existingContact === false) {
+      return 'телефон или емайл уже присвоен другому пользователю';
+    } else if (existingContact) {
       // Контакт найден, обновляем его
       await this.updateContact(existingContact.id, name, email, phone);
     } else {
@@ -106,71 +92,133 @@ export class AmoCRMService {
       const newContactId = await this.createContact(name, email, phone);
       // Шаг 3: Создание сделки
       await this.createDeal(newContactId);
+      return `контакт ${newContactId} создан`;
     }
   }
 
-  // Шаг 3: Создание контакта в AmoCRM
+  // Создание контакта
   private async createContact(name: string, email: string, phone: string) {
-    await this.authenticate();
-
     const createContactUrl = `${this.configService.get('amoCRMBaseUrl', {
       infer: true,
     })}/api/v4/contacts`;
 
-    const config: AxiosRequestConfig = {
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        'Content-Type': 'application/json',
+    const contactData: CreateDataModel = [
+      {
+        name: name,
+        custom_fields_values: [
+          {
+            field_name: 'Телефон',
+            field_code: 'PHONE',
+            field_type: 'multitext',
+            values: [
+              {
+                value: phone,
+              },
+            ],
+          },
+          {
+            field_name: 'EMAIL',
+            field_code: 'EMAIL',
+            field_type: 'multitext',
+            values: [
+              {
+                value: email,
+              },
+            ],
+          },
+        ],
       },
-    };
+    ];
 
-    const contactData = {
-      name: name,
-      custom_fields_values: [
-        {
-          field_id: 123, // Идентификатор поля для email, замените на реальный
-          values: [{ value: email }],
-        },
-        {
-          field_id: 456, // Идентификатор поля для телефона, замените на реальный
-          values: [{ value: phone }],
-        },
-      ],
-    };
-
-    const response = await lastValueFrom(
-      this.httpService.post(createContactUrl, contactData, config),
+    const createResult = await this.adapter.makePostRequest(
+      createContactUrl,
+      contactData,
     );
 
-    if (response.data && response.data.id) {
-      return response.data.id;
+    if (createResult.data?._embedded?.contacts[0].id) {
+      return createResult.data?._embedded?.contacts[0].id;
     }
 
     throw new Error('Failed to create a new contact');
   }
 
-  // Реализуйте другие методы, такие как updateContact, createDeal
+  // Создание сделки
+  private async createDeal(contactId: number) {
+    const createDealUrl = `${this.configService.get('amoCRMBaseUrl', {
+      infer: true,
+    })}/api/v4/leads`;
+
+    const dealData: CreateDealDataModel = [
+      {
+        name: 'сделка',
+        _embedded: {
+          contacts: [
+            {
+              id: contactId,
+            },
+          ],
+        },
+      },
+    ];
+
+    const createResult = await this.adapter.makePostRequest(
+      createDealUrl,
+      dealData,
+    );
+
+    if (createResult?.data?._embedded?.leads[0]?.id) {
+      return createResult.data._embedded.leads[0].id;
+    }
+
+    throw new Error('Failed to create a new deal');
+  }
+
+  // Обновление контакта
   private async updateContact(
     contactId: number,
     name: string,
     email: string,
     phone: string,
   ) {
-    // Реализуйте обновление контакта
-  }
+    const updateContactUrl = `${this.configService.get('amoCRMBaseUrl', {
+      infer: true,
+    })}/api/v4/contacts/${contactId}`;
 
-  private async createDeal(contactId: number) {
-    // Реализуйте создание сделки
-  }
+    const contactData: UpdateDataModel = {
+      name: name,
+      custom_fields_values: [
+        {
+          field_name: 'Телефон',
+          field_code: 'PHONE',
+          field_type: 'multitext',
+          values: [
+            {
+              value: phone,
+            },
+          ],
+        },
+        {
+          field_name: 'EMAIL',
+          field_code: 'EMAIL',
+          field_type: 'multitext',
+          values: [
+            {
+              value: email,
+            },
+          ],
+        },
+      ],
+    };
 
-  // Ваш метод для обработки запроса AmoCRM
-  async processAmoCRMRequest(
-    name: string,
-    email: string,
-    phone: string,
-  ): Promise<string> {
-    await this.updateOrCreateContact(name, email, phone);
+    const updateResult = await this.adapter.makePathRequest(
+      updateContactUrl,
+      contactData,
+    );
 
-    return 'Результат обработки запроса AmoCRM';
+    if (updateResult?.data) {
+      return ` контакт ${updateResult.data?.id} обновлен`;
+    }
+
+    throw new Error('Failed to update the contact');
   }
 }

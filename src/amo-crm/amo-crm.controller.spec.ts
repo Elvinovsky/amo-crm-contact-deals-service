@@ -1,15 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { AmoCrmController } from './amo-crm.controller';
+import { AmoCRMController } from './amo-crm.controller';
 
 describe('AmoCrmController', () => {
-  let controller: AmoCrmController;
+  let controller: AmoCRMController;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [AmoCrmController],
+      controllers: [AmoCRMController],
     }).compile();
 
-    controller = module.get<AmoCrmController>(AmoCrmController);
+    controller = module.get<AmoCRMController>(AmoCRMController);
   });
 
   it('should be defined', () => {
